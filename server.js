@@ -7,8 +7,7 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_NAME = "redditClone";
-const DB_URI =
-  process.env.MONGODB_URI || `mongodb://127.0.0.1:27017/${DB_NAME}`;
+const DB_URI = process.env.MONGODB_URI || `mongodb://127.0.0.1:27017/${DB_NAME}`;
 
 // Middleware setup
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -23,11 +22,13 @@ mongoose.set("strictQuery", true);
 const postSchema = new mongoose.Schema({
   content: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
+  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 });
 
 const userSchema = new mongoose.Schema({
   username: { type: String, unique: true, required: true },
   password: { type: String, required: true },
+  posts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Post' }]
 });
 
 // Models
@@ -65,10 +66,7 @@ async function connectToDatabase() {
         await User.createIndexes(); // Ensure unique username index
       }
     } catch (collectionError) {
-      console.error(
-        "⚠️ Collection initialization error:",
-        collectionError.message
-      );
+      console.error("⚠️ Collection initialization error:", collectionError.message);
     }
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error.message);
@@ -84,15 +82,17 @@ async function connectToDatabase() {
 // Routes
 app.get("/", async (req, res) => {
   try {
-    const posts = await Post.find().sort({ timestamp: -1 }).limit(20);
+    const posts = await Post.find().sort({ timestamp: -1 }).limit(20).populate('author');
     res.render("home", {
       loggedIn: false,
+      currentUser: null,
       posts,
       error: null,
     });
   } catch (error) {
     res.render("home", {
       loggedIn: false,
+      currentUser: null,
       posts: [],
       error: "Failed to load posts",
     });
@@ -120,9 +120,10 @@ app.post("/login", async (req, res) => {
     }
 
     // Successful login
-    const posts = await Post.find().sort({ timestamp: -1 }).limit(20);
+    const posts = await Post.find().sort({ timestamp: -1 }).limit(20).populate('author');
     res.render("home", {
       loggedIn: true,
+      currentUser: user,
       posts,
       error: null,
     });
@@ -164,9 +165,10 @@ app.post("/register", async (req, res) => {
   }
 });
 
+// Create Post
 app.post("/posts", async (req, res) => {
   try {
-    const { content } = req.body;
+    const { content, userId } = req.body;
 
     if (!content || content.trim() === "") {
       return res.status(400).json({
@@ -174,16 +176,88 @@ app.post("/posts", async (req, res) => {
       });
     }
 
-    const newPost = new Post({ content });
+    const newPost = new Post({ content, author: userId });
     await newPost.save();
+    
+    // Add post to user's posts array
+    await User.findByIdAndUpdate(userId, {
+      $push: { posts: newPost._id }
+    });
+
+    const populatedPost = await Post.findById(newPost._id).populate('author');
 
     res.status(201).json({
       message: "Post created successfully",
-      post: newPost,
+      post: populatedPost,
     });
   } catch (error) {
     res.status(500).json({
       error: "Failed to create post",
+    });
+  }
+});
+
+// Update Post
+app.put("/posts/:id", async (req, res) => {
+  try {
+    const { content } = req.body;
+    const postId = req.params.id;
+
+    if (!content || content.trim() === "") {
+      return res.status(400).json({
+        error: "Post content cannot be empty",
+      });
+    }
+
+    const updatedPost = await Post.findByIdAndUpdate(
+      postId,
+      { content },
+      { new: true }
+    ).populate('author');
+
+    if (!updatedPost) {
+      return res.status(404).json({
+        error: "Post not found",
+      });
+    }
+
+    res.status(200).json({
+      message: "Post updated successfully",
+      post: updatedPost,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to update post",
+    });
+  }
+});
+
+// Delete Post
+app.delete("/posts/:id", async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.body.userId;
+
+    // Remove post from user's posts array
+    await User.findByIdAndUpdate(userId, {
+      $pull: { posts: postId }
+    });
+
+    // Delete the post
+    const deletedPost = await Post.findByIdAndDelete(postId);
+
+    if (!deletedPost) {
+      return res.status(404).json({
+        error: "Post not found",
+      });
+    }
+
+    res.status(200).json({
+      message: "Post deleted successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to delete post",
     });
   }
 });
