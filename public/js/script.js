@@ -116,7 +116,95 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
   }
+  // Add Comment
+  document.addEventListener('submit', async function(e) {
+    if (e.target.classList.contains('add-comment-form')) {
+      e.preventDefault();
+      const postId = e.target.dataset.postId;
+      const input = e.target.querySelector('input');
+      const content = input.value.trim();
 
+      if (!content) return;
+
+      try {
+        const response = await fetch(`/posts/${postId}/comments`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            content,
+            userId: typeof currentUserId !== 'undefined' ? currentUserId : null
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          addCommentToDOM(postId, data.comment);
+          input.value = '';
+        }
+      } catch (error) {
+        console.error("Error adding comment:", error);
+      }
+    }
+  });
+
+  // Delete Comment
+  document.addEventListener('click', async function(e) {
+    if (e.target.classList.contains('delete-comment') || e.target.closest('.delete-comment')) {
+      if (!confirm('Are you sure you want to delete this comment?')) return;
+      
+      const commentElement = e.target.closest('.comment');
+      const commentId = commentElement.dataset.commentId;
+      const postId = commentElement.closest('.post').dataset.postId;
+      
+      try {
+        const response = await fetch(`/posts/${postId}/comments/${commentId}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ 
+            userId: typeof currentUserId !== 'undefined' ? currentUserId : null 
+          })
+        });
+
+        if (response.ok) {
+          commentElement.remove();
+        }
+      } catch (error) {
+        console.error('Error deleting comment:', error);
+      }
+    }
+  });
+
+  // Helper function to add new comment to DOM
+  function addCommentToDOM(postId, comment) {
+    const commentsContainer = document.querySelector(`#comments-${postId}`);
+    if (!commentsContainer) return;
+
+    const commentElement = document.createElement('div');
+    commentElement.className = 'comment card mt-2 p-2';
+    commentElement.dataset.commentId = comment._id;
+    commentElement.innerHTML = `
+      <div class="d-flex justify-content-between">
+        <small class="text-muted">
+          ${comment.author ? comment.author.username : 'Anonymous'}:
+        </small>
+        ${comment.author && comment.author._id.toString() === currentUserId ? `
+          <button class="btn btn-sm btn-outline-danger delete-comment">
+            <i class="fas fa-trash fa-xs"></i>
+          </button>
+        ` : ''}
+      </div>
+      <p class="mb-0">${comment.content}</p>
+      <small class="text-muted">
+        ${new Date(comment.timestamp).toLocaleString()}
+      </small>
+    `;
+
+    commentsContainer.appendChild(commentElement);
+  }
   // Function to add new post to DOM
   function addNewPostToDOM(post) {
     if (!postsContainer) return;

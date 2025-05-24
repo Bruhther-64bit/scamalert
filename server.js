@@ -18,22 +18,7 @@ app.set("view engine", "ejs");
 // Configure Mongoose
 mongoose.set("strictQuery", true);
 
-// Database Schemas
-const postSchema = new mongoose.Schema({
-  content: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now },
-  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
-});
-
-const userSchema = new mongoose.Schema({
-  username: { type: String, unique: true, required: true },
-  password: { type: String, required: true },
-  posts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Post' }]
-});
-
-// Models
-const Post = mongoose.model("Post", postSchema);
-const User = mongoose.model("User", userSchema);
+const { Post, User, Comment } = require('./models');
 
 // Enhanced Database Connection
 async function connectToDatabase() {
@@ -82,7 +67,19 @@ async function connectToDatabase() {
 // Routes
 app.get("/", async (req, res) => {
   try {
-    const posts = await Post.find().sort({ timestamp: -1 }).limit(20).populate('author');
+    let posts = await Post.find().sort({ timestamp: -1 }).limit(20)
+      .populate('author')
+      .populate('comments.author')
+      .lean(); // Convert to plain JS objects
+    
+    // Ensure all posts have comments array
+    posts = posts.map(post => {
+      if (!post.comments) {
+        post.comments = [];
+      }
+      return post;
+    });
+
     res.render("home", {
       loggedIn: false,
       currentUser: null,
@@ -90,6 +87,7 @@ app.get("/", async (req, res) => {
       error: null,
     });
   } catch (error) {
+    console.error("Error loading posts:", error);
     res.render("home", {
       loggedIn: false,
       currentUser: null,
@@ -98,7 +96,6 @@ app.get("/", async (req, res) => {
     });
   }
 });
-
 app.get("/login", (req, res) => {
   res.render("login", { error: null });
 });
@@ -165,7 +162,6 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// Create Post
 app.post("/posts", async (req, res) => {
   try {
     const { content, userId } = req.body;
@@ -176,7 +172,12 @@ app.post("/posts", async (req, res) => {
       });
     }
 
-    const newPost = new Post({ content, author: userId });
+    const newPost = new Post({ 
+      content, 
+      author: userId,
+      comments: [] // Initialize empty comments array
+    });
+    
     await newPost.save();
     
     // Add post to user's posts array
@@ -184,7 +185,9 @@ app.post("/posts", async (req, res) => {
       $push: { posts: newPost._id }
     });
 
-    const populatedPost = await Post.findById(newPost._id).populate('author');
+    const populatedPost = await Post.findById(newPost._id)
+      .populate('author')
+      .populate('comments.author');
 
     res.status(201).json({
       message: "Post created successfully",
@@ -261,23 +264,107 @@ app.delete("/posts/:id", async (req, res) => {
     });
   }
 });
+// Add Comment to Post
+app.post("/posts/:postId/comments", async (req, res) => {
+  try {
+    const { content, userId } = req.body;
+    const postId = req.params.postId;
+
+    if (!content || content.trim() === "") {
+      return res.status(400).json({
+        error: "Comment content cannot be empty",
+      });
+    }
+
+    const newComment = {
+      content,
+      author: userId,
+      timestamp: new Date()
+    };
+
+    const updatedPost = await Post.findByIdAndUpdate(
+      postId,
+      { $push: { comments: newComment } },
+      { new: true }
+    ).populate('author').populate('comments.author');
+
+    if (!updatedPost) {
+      return res.status(404).json({
+        error: "Post not found",
+      });
+    }
+
+    res.status(201).json({
+      message: "Comment added successfully",
+      comment: updatedPost.comments[updatedPost.comments.length - 1],
+      postId: postId
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to add comment",
+    });
+  }
+});
+
+// Delete comment
+app.delete("/posts/:postId/comments/:commentId", async (req, res) => {
+  try {
+    const { postId, commentId } = req.params;
+    const { userId } = req.body;
+
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    const comment = post.comments.id(commentId);
+    if (!comment) {
+      return res.status(404).json({ error: "Comment not found" });
+    }
+
+    // Check if user is the author
+    if (comment.author.toString() !== userId) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    post.comments.pull(commentId);
+    await post.save();
+
+    res.status(200).json({
+      message: "Comment deleted successfully",
+      postId: postId,
+      commentId: commentId
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "Failed to delete comment",
+    });
+  }
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error("🔥 Server Error:", err.stack);
-  res.status(500).render("error", {
+  res.status(500).json({
     message: "Something went wrong!",
+    error: err.message
   });
 });
-
 // Start the server
 async function startServer() {
   try {
     await connectToDatabase();
 
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
+    const server = app.listen(PORT, () => {
+      console.log(`🚀 Server running on http://localhost:${server.address().port}`);
       console.log(`📊 MongoDB URI: ${DB_URI}`);
+    });
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.log(`Port ${PORT} in use, trying ${PORT + 1}...`);
+        app.listen(PORT + 1);
+      }
     });
   } catch (error) {
     console.error("💥 Failed to start server:", error);
