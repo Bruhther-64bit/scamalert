@@ -297,13 +297,14 @@ const MediaPreview: React.FC<{ attachment: Attachment; isPreview?: boolean }> = 
 
   if (attachment.fileType === 'image') {
     return (
-      <div className="relative group overflow-hidden rounded-lg">
+      <div className="relative group overflow-hidden rounded-lg bg-black">
         <img
           src={fileUrl}
           alt={attachment.originalName}
-          className={`w-full object-cover transition-transform duration-300 group-hover:scale-105 ${
-            isPreview ? 'h-20' : 'h-auto max-h-96'
+          className={`w-full h-full object-contain transition-transform duration-300 group-hover:scale-105 ${
+            isPreview ? 'max-h-20' : 'max-h-96'
           }`}
+          style={{ backgroundColor: '#000' }}
         />
         {!isPreview && (
           <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -34,7 +34,7 @@ uploadDirs.forEach(dir => {
 
 // MongoDB Connection
 mongoose
-  .connect('mongodb://127.0.0.1:27017/scam_alert3', {
+  .connect('mongodb://127.0.0.1:27017/scam_alert', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   })
